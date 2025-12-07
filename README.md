@@ -69,6 +69,7 @@ pip install -r requirements.txt
 ### Running the Application
 
 ```bash
+source venv/bin/activate 
 python main.py
 ```
 

@@ -14,7 +14,7 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from waveform_widget import WaveformWidget
 from audio_processor import AudioProcessor
 from marker_manager import MarkerManager
-from export_dialog import ExportDialog
+from export_dialog import ExportDialog, ConcatDialog
 import os
 
 
@@ -120,7 +120,13 @@ class AudioSplitterApp(QMainWindow):
         self.export_button.setEnabled(False)
         self.export_button.setStyleSheet("font-weight: bold; padding: 10px;")
         action_layout.addWidget(self.export_button)
-        
+
+        self.concat_button = QPushButton("Concat Splits")
+        self.concat_button.clicked.connect(self._concat_splits)
+        self.concat_button.setEnabled(False)
+        self.concat_button.setStyleSheet("font-weight: bold; padding: 10px;")
+        action_layout.addWidget(self.concat_button)
+
         main_layout.addLayout(action_layout)
         
         central_widget.setLayout(main_layout)
@@ -346,6 +352,7 @@ class AudioSplitterApp(QMainWindow):
         self.detect_silence_button.setEnabled(True)
         self.save_markers_button.setEnabled(True)
         self.export_button.setEnabled(True)
+        self.concat_button.setEnabled(True)
         self.play_button.setEnabled(True)
         self.stop_button.setEnabled(True)
         
@@ -612,15 +619,84 @@ class AudioSplitterApp(QMainWindow):
             trim_silence=settings["trim_silence"],
             excluded_splits=self.marker_manager.get_excluded_splits()
         )
-        
+
         progress.close()
-        
+
         if success:
             QMessageBox.information(self, "Success", message)
             self.statusBar.showMessage(message)
         else:
             QMessageBox.critical(self, "Error", message)
-            
+
+    def _concat_splits(self):
+        """Concatenate audio splits into a single file."""
+        if self.audio_processor.audio_data is None:
+            QMessageBox.warning(self, "No Audio", "Please load an audio file first.")
+            return
+
+        if not self.marker_manager.get_markers():
+            QMessageBox.warning(
+                self,
+                "No Markers",
+                "Please add at least one marker to split the audio."
+            )
+            return
+
+        input_format = None
+        if self.current_audio_file:
+            input_format = os.path.splitext(self.current_audio_file)[1][1:]
+
+        saved_concat_settings = {
+            "format": self.settings.value("concat/format", "", type=str),
+            "sample_rate": self.settings.value("concat/sample_rate", 44100, type=int),
+            "channels": self.settings.value("concat/channels", 2, type=int),
+            "quality": self.settings.value("concat/quality", "medium", type=str),
+            "output_folder": self.settings.value("folders/output", "", type=str),
+            "filename": self.settings.value("concat/filename", "concatenated", type=str),
+            "silence_duration": self.settings.value("concat/silence_duration", 500, type=int)
+        }
+
+        dialog = ConcatDialog(self, default_format=input_format, saved_settings=saved_concat_settings)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            settings = dialog.get_concat_settings()
+
+            self.settings.setValue("concat/format", settings["format"])
+            self.settings.setValue("concat/sample_rate", settings["sample_rate"])
+            self.settings.setValue("concat/channels", settings["channels"])
+            self.settings.setValue("concat/quality", settings["quality"])
+            self.settings.setValue("folders/output", settings["output_folder"])
+            self.settings.setValue("concat/filename", settings["filename"])
+            self.settings.setValue("concat/silence_duration", settings["silence_duration"])
+
+            progress = QProgressDialog("Concatenating splits...", "Cancel", 0, 100, self)
+            progress.setWindowModality(Qt.WindowModality.WindowModal)
+            progress.show()
+
+            QTimer.singleShot(100, lambda: self._concat_splits_delayed(settings, progress))
+
+    def _concat_splits_delayed(self, settings, progress):
+        """Delayed concatenation to show progress dialog."""
+        success, message = self.audio_processor.concat_splits(
+            split_times=self.marker_manager.get_markers(),
+            output_folder=settings["output_folder"],
+            filename=settings["filename"],
+            output_format=settings["format"],
+            sample_rate=settings["sample_rate"],
+            channels=settings["channels"],
+            quality=settings["quality"],
+            silence_duration_ms=settings["silence_duration"],
+            excluded_splits=self.marker_manager.get_excluded_splits()
+        )
+
+        progress.close()
+
+        if success:
+            QMessageBox.information(self, "Success", message)
+            self.statusBar.showMessage(message)
+        else:
+            QMessageBox.critical(self, "Error", message)
+
     def _show_about(self):
         """Show about dialog."""
         QMessageBox.about(

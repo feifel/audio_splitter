@@ -303,11 +303,11 @@ class AudioProcessor:
             return audio[start_sample:end_sample]
     
     def _export_audio(
-        self, 
-        audio: np.ndarray, 
-        output_path: str, 
-        format: str, 
-        sample_rate: int, 
+        self,
+        audio: np.ndarray,
+        output_path: str,
+        format: str,
+        sample_rate: int,
         quality: str
     ):
         """Export audio to file in specified format."""
@@ -316,24 +316,24 @@ class AudioProcessor:
             audio_export = audio
         else:
             audio_export = audio.T
-        
+
         if format == "wav":
             # Direct export with soundfile
             sf.write(output_path, audio_export, sample_rate, subtype='PCM_16')
-            
+
         elif format == "flac":
             # Export as FLAC
             sf.write(output_path, audio_export, sample_rate, format='FLAC')
-            
+
         else:
             # For MP3 and OGG, use pydub
             # First save as temporary WAV
             temp_wav = output_path + ".temp.wav"
             sf.write(temp_wav, audio_export, sample_rate, subtype='PCM_16')
-            
+
             # Load with pydub and convert
             audio_segment = AudioSegment.from_wav(temp_wav)
-            
+
             # Set quality/bitrate
             bitrate_map = {
                 "low": "128k",
@@ -341,12 +341,125 @@ class AudioProcessor:
                 "high": "320k"
             }
             bitrate = bitrate_map.get(quality, "192k")
-            
+
             # Export in desired format
             if format == "mp3":
                 audio_segment.export(output_path, format="mp3", bitrate=bitrate)
             elif format == "ogg":
                 audio_segment.export(output_path, format="ogg", codec="libvorbis", bitrate=bitrate)
-            
+
             # Remove temporary file
             os.remove(temp_wav)
+
+    def concat_splits(
+        self,
+        split_times: List[float],
+        output_folder: str,
+        filename: str,
+        output_format: str = "wav",
+        sample_rate: int = 44100,
+        channels: int = 2,
+        quality: str = "high",
+        silence_duration_ms: int = 500,
+        excluded_splits: List[int] = None
+    ) -> Tuple[bool, str]:
+        """
+        Concatenate audio splits into a single file with silence between them.
+
+        Args:
+            split_times: List of split marker times in seconds
+            output_folder: Output directory path
+            filename: Output filename (without extension)
+            output_format: Output format (mp3, wav, flac, ogg)
+            sample_rate: Output sample rate
+            channels: 1 for mono, 2 for stereo
+            quality: Quality setting for compressed formats
+            silence_duration_ms: Duration of silence to insert between splits in milliseconds
+            excluded_splits: List of split indices to exclude from concatenation (0-based)
+
+        Returns:
+            Tuple of (success, message)
+        """
+        if self.audio_data is None:
+            return False, "No audio loaded"
+
+        try:
+            os.makedirs(output_folder, exist_ok=True)
+
+            if excluded_splits is None:
+                excluded_splits = []
+
+            split_times = sorted([0.0] + split_times + [self.duration])
+
+            num_splits = len(split_times) - 1
+            num_included = num_splits - len(excluded_splits)
+
+            if num_included == 0:
+                return False, "No splits to concatenate (all excluded)"
+
+            concatenated_segments = []
+
+            for i in range(num_splits):
+                if i in excluded_splits:
+                    continue
+
+                start_time = split_times[i]
+                end_time = split_times[i + 1]
+
+                start_sample = int(start_time * self.sample_rate)
+                end_sample = int(end_time * self.sample_rate)
+
+                if self.channels > 1:
+                    segment = self.audio_data[:, start_sample:end_sample]
+                else:
+                    segment = self.audio_data[start_sample:end_sample]
+
+                segment = self._trim_silence(segment)
+
+                if sample_rate != self.sample_rate:
+                    segment = librosa.resample(
+                        segment,
+                        orig_sr=self.sample_rate,
+                        target_sr=sample_rate
+                    )
+
+                if channels == 1 and self.channels > 1:
+                    segment = np.mean(segment, axis=0)
+                elif channels == 2 and self.channels == 1:
+                    segment = np.stack([segment, segment])
+
+                concatenated_segments.append(segment)
+
+            silence_samples = int((silence_duration_ms / 1000.0) * sample_rate)
+            if channels == 1:
+                silence = np.zeros(silence_samples)
+            else:
+                silence = np.zeros((2, silence_samples))
+
+            final_audio = []
+            for i, segment in enumerate(concatenated_segments):
+                final_audio.append(segment)
+                if i < len(concatenated_segments) - 1:
+                    final_audio.append(silence)
+
+            if channels == 1:
+                concatenated_audio = np.concatenate(final_audio)
+            else:
+                concatenated_audio = np.concatenate(final_audio, axis=1)
+
+            output_filename = f"{filename}.{output_format}"
+            output_path = os.path.join(output_folder, output_filename)
+
+            self._export_audio(
+                concatenated_audio,
+                output_path,
+                output_format,
+                sample_rate,
+                quality
+            )
+
+            excluded_msg = f" ({len(excluded_splits)} excluded)" if excluded_splits else ""
+            return True, f"Concatenated {num_included} splits successfully{excluded_msg}"
+
+        except Exception as e:
+            return False, f"Error concatenating splits: {str(e)}"
