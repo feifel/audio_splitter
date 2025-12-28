@@ -361,7 +361,8 @@ class AudioProcessor:
         channels: int = 2,
         quality: str = "high",
         silence_duration_ms: int = 500,
-        excluded_splits: List[int] = None
+        excluded_splits: List[int] = None,
+        silence_threshold_db: float = -40.0
     ) -> Tuple[bool, str]:
         """
         Concatenate audio splits into a single file with silence between them.
@@ -376,6 +377,7 @@ class AudioProcessor:
             quality: Quality setting for compressed formats
             silence_duration_ms: Duration of silence to insert between splits in milliseconds
             excluded_splits: List of split indices to exclude from concatenation (0-based)
+            silence_threshold_db: Silence threshold in dB for trimming splits
 
         Returns:
             Tuple of (success, message)
@@ -414,7 +416,7 @@ class AudioProcessor:
                 else:
                     segment = self.audio_data[start_sample:end_sample]
 
-                segment = self._trim_silence(segment)
+                segment = self._trim_silence(segment, silence_threshold_db)
 
                 if sample_rate != self.sample_rate:
                     segment = librosa.resample(

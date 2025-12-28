@@ -677,6 +677,9 @@ class AudioSplitterApp(QMainWindow):
 
     def _concat_splits_delayed(self, settings, progress):
         """Delayed concatenation to show progress dialog."""
+        # Get silence threshold from UI
+        threshold = float(self.threshold_spinbox.value())
+
         success, message = self.audio_processor.concat_splits(
             split_times=self.marker_manager.get_markers(),
             output_folder=settings["output_folder"],
@@ -686,7 +689,8 @@ class AudioSplitterApp(QMainWindow):
             channels=settings["channels"],
             quality=settings["quality"],
             silence_duration_ms=settings["silence_duration"],
-            excluded_splits=self.marker_manager.get_excluded_splits()
+            excluded_splits=self.marker_manager.get_excluded_splits(),
+            silence_threshold_db=threshold
         )
 
         progress.close()
